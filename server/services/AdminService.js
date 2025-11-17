@@ -2,6 +2,9 @@ import { Admin } from '../models/Admin.js';
 import { Test } from '../models/Test.js';
 import { TestKeyModel } from '../models/TestKey.js';
 import { Attempt } from '../models/Attempt.js';
+import { User } from '../models/User.js';
+import { Result } from '../models/Result.js';
+import { testStorage } from '../utils/fileStorage.js';
 import { generateAccessToken, generateRefreshToken } from '../config/jwt.js';
 import logger from '../utils/logger.js';
 
@@ -46,8 +49,18 @@ export class AdminService {
       createdBy: adminId
     });
 
-    logger.info(`Admin ${adminId} created test ${test.id}`);
-    return test;
+    // Automatically generate test key
+    const testKey = await TestKeyModel.create({
+      testId: test.id,
+      adminId
+    });
+
+    logger.info(`Admin ${adminId} created test ${test.id} with key ${testKey.key}`);
+    return {
+      ...test,
+      testKey: testKey.key,
+      testId: test.id
+    };
   }
 
   static async getTests(adminId) {
@@ -183,6 +196,104 @@ export class AdminService {
 
   static async getStats(adminId) {
     return await Admin.getStats(adminId);
+  }
+
+  // File-based storage methods - Admin sees ONLY students who used their test keys
+  static async getMyUsers(adminId) {
+    // Get all test keys for this admin
+    const testKeys = await TestKeyModel.findByAdmin(adminId);
+    const testKeyList = testKeys.map(k => k.key);
+
+    if (testKeyList.length === 0) {
+      return [];
+    }
+
+    // Get all students who used these test keys (check used_admin_key field)
+    const allStudents = await Student.getAll();
+    const myStudents = allStudents.filter(student => 
+      testKeyList.includes(student.used_admin_key || student.used_test_key || '')
+    );
+
+    // Return full student information
+    return myStudents.map(s => ({
+      id: s.id,
+      full_name: s.full_name || s.fullName || '',
+      email: s.email || '',
+      username: s.username || s.login || '',
+      phone: s.phone || '',
+      registered_at: s.registered_at || s.registration_date || s.createdAt || '',
+      last_login: s.last_login || s.lastLogin || null,
+      used_admin_key: s.used_admin_key || '',
+      test_status: s.test_status || 'not_taken',
+      test_score: s.test_score || '',
+    }));
+  }
+
+  static async getMyResults(adminId) {
+    // Get all test keys for this admin
+    const testKeys = await TestKeyModel.findByAdmin(adminId);
+    const testKeyList = testKeys.map(k => k.key);
+
+    if (testKeyList.length === 0) {
+      return [];
+    }
+
+    // Get all results for these test keys
+    const allResults = await Result.getAll();
+    const adminResults = allResults.filter(result => 
+      testKeyList.includes(result.test_key || result.testKey)
+    );
+
+    return adminResults;
+  }
+
+  static async getMyTest(adminId, testId) {
+    // Verify the test belongs to this admin
+    const test = await Test.findById(testId);
+    if (!test || test.createdBy !== adminId) {
+      throw new Error('Test not found or access denied');
+    }
+
+    // Get test key for this test
+    const testKeys = await TestKeyModel.findByTest(testId);
+    const adminTestKeys = testKeys.filter(k => k.adminId === adminId);
+    
+    if (adminTestKeys.length === 0) {
+      return {
+        test,
+        results: [],
+        users: [],
+      };
+    }
+
+    const testKeyList = adminTestKeys.map(k => k.key);
+
+    // Get results for this test
+    const results = await Result.findByTest(testId);
+    const adminResults = results.filter(result =>
+      testKeyList.includes(result.test_key || result.testKey)
+    );
+
+    // Get students who took this test (filter by used_admin_key)
+    const allStudents = await Student.getAll();
+    const myStudents = allStudents.filter(student => 
+      testKeyList.includes(student.used_admin_key || student.used_test_key || '')
+    );
+
+    return {
+      test,
+      testKeys: adminTestKeys,
+      results: adminResults,
+      users: myStudents.map(s => ({
+        id: s.id,
+        full_name: s.full_name || s.fullName || '',
+        email: s.email || '',
+        username: s.username || s.login || '',
+        phone: s.phone || '',
+        test_status: s.test_status || 'not_taken',
+        test_score: s.test_score || '',
+      })),
+    };
   }
 }
 

@@ -13,6 +13,10 @@ if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(path.join(UPLOAD_DIR, 'reading'), { recursive: true });
   fs.mkdirSync(path.join(UPLOAD_DIR, 'listening'), { recursive: true });
   fs.mkdirSync(path.join(UPLOAD_DIR, 'writing'), { recursive: true });
+  fs.mkdirSync(path.join(UPLOAD_DIR, 'students'), { recursive: true });
+  fs.mkdirSync(path.join(UPLOAD_DIR, 'tests'), { recursive: true });
+  fs.mkdirSync(path.join(UPLOAD_DIR, 'results'), { recursive: true });
+  fs.mkdirSync(path.join(UPLOAD_DIR, 'keys'), { recursive: true });
 }
 
 const storage = multer.diskStorage({

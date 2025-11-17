@@ -23,5 +23,10 @@ router.get('/results', authenticate, requireAdmin, AdminController.getResults);
 router.get('/students', authenticate, requireAdmin, AdminController.getStudents);
 router.get('/stats', authenticate, requireAdmin, AdminController.getStats);
 
+// File-based storage endpoints - Admin sees ONLY their users
+router.get('/my-users', authenticate, requireAdmin, AdminController.getMyUsers);
+router.get('/my-results', authenticate, requireAdmin, AdminController.getMyResults);
+router.get('/my-test/:test_id', authenticate, requireAdmin, AdminController.getMyTest);
+
 export default router;
 

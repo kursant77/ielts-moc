@@ -17,5 +17,13 @@ router.get('/tests', authenticate, requireOwner, OwnerController.getAllTests);
 router.get('/students', authenticate, requireOwner, OwnerController.getAllStudents);
 router.get('/attempts', authenticate, requireOwner, OwnerController.getAllAttempts);
 
+// File-based storage endpoints
+router.get('/users', authenticate, requireOwner, OwnerController.getAllUsers);
+router.get('/user/:id', authenticate, requireOwner, OwnerController.getUserById);
+router.get('/all-results', authenticate, requireOwner, OwnerController.getAllResults);
+router.get('/user-tests/:id', authenticate, requireOwner, OwnerController.getUserResults);
+router.patch('/user/:id/status', authenticate, requireOwner, OwnerController.updateUserStatus);
+router.post('/user/:id/reset-password', authenticate, requireOwner, OwnerController.resetUserPassword);
+
 export default router;
 

@@ -115,5 +115,68 @@ export class OwnerController {
       res.status(500).json({ error: error.message });
     }
   }
+
+  // File-based storage endpoints
+  static async getAllUsers(req, res, next) {
+    try {
+      const users = await OwnerService.getAllUsers();
+      res.json(users);
+    } catch (error) {
+      logger.error('Get all users error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async getUserById(req, res, next) {
+    try {
+      const user = await OwnerService.getUserById(req.params.id);
+      res.json(user);
+    } catch (error) {
+      logger.error('Get user error:', error);
+      res.status(404).json({ error: error.message });
+    }
+  }
+
+  static async getAllResults(req, res, next) {
+    try {
+      const results = await OwnerService.getAllResults();
+      res.json(results);
+    } catch (error) {
+      logger.error('Get all results error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async getUserResults(req, res, next) {
+    try {
+      const results = await OwnerService.getUserResults(req.params.id);
+      res.json(results);
+    } catch (error) {
+      logger.error('Get user results error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async updateUserStatus(req, res, next) {
+    try {
+      const { status } = req.body;
+      const user = await OwnerService.updateUserStatus(req.params.id, status);
+      res.json(user);
+    } catch (error) {
+      logger.error('Update user status error:', error);
+      res.status(400).json({ error: error.message });
+    }
+  }
+
+  static async resetUserPassword(req, res, next) {
+    try {
+      const { newPassword } = req.body;
+      const result = await OwnerService.resetUserPassword(req.params.id, newPassword);
+      res.json({ success: true });
+    } catch (error) {
+      logger.error('Reset user password error:', error);
+      res.status(400).json({ error: error.message });
+    }
+  }
 }
 

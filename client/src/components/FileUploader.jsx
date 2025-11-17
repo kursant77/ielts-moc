@@ -8,6 +8,7 @@ const FileUploader = ({
   maxSize = 10, 
   multiple = false,
   label = 'Upload File',
+  description = '',
   className = ''
 }) => {
   const [files, setFiles] = useState([]);
@@ -98,6 +99,11 @@ const FileUploader = ({
         <p className="text-xs text-gray-500 dark:text-gray-500">
           Maximum file size: {maxSize}MB
         </p>
+        {description && (
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
+            {description}
+          </p>
+        )}
       </div>
 
       <AnimatePresence>

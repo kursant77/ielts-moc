@@ -3,7 +3,7 @@ import api from '../utils/api';
 export const studentApi = {
   login: (email, password) => api.post('/student/login', { email, password }),
   register: (data) => api.post('/student/register', data),
-  accessTest: (testKey, fullName) => api.post('/student/access', { testKey, fullName }),
+  accessTest: (testKey, fullName, studentId = null) => api.post('/student/access', { testKey, fullName, studentId }),
   getTest: () => api.get('/student/test'),
   getAttempt: () => api.get('/student/attempt'),
   saveReadingAnswers: (answers) => api.post('/student/answers/reading', { answers }),

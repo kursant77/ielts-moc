@@ -38,6 +38,7 @@ import StudentLayout from '../layouts/StudentLayout';
 import StudentDashboard from '../pages/student/StudentDashboard';
 import StudentProfile from '../pages/student/StudentProfile';
 import StudentTests from '../pages/student/StudentTests';
+import StudentHistory from '../pages/student/StudentHistory';
 
 const ProtectedRoute = ({ children, requiredRole }) => {
   const { user, loading } = useAuth();
@@ -52,9 +53,15 @@ const ProtectedRoute = ({ children, requiredRole }) => {
   }
 
   if (requiredRole && user.role !== requiredRole) {
-    if (user.role === 'owner') return <Navigate to="/owner/dashboard" replace />;
-    if (user.role === 'admin') return <Navigate to="/admin/dashboard" replace />;
-    if (user.role === 'student') return <Navigate to="/exam-access" replace />;
+    if (user.role === 'owner') {
+      return <Navigate to="/owner/dashboard" replace />;
+    }
+    if (user.role === 'admin') {
+      return <Navigate to="/admin/dashboard" replace />;
+    }
+    if (user.role === 'student') {
+      return <Navigate to="/student/dashboard" replace />;
+    }
     return <Navigate to="/" replace />;
   }
 
@@ -68,10 +75,17 @@ const PublicRoute = ({ children, redirectIfAuth }) => {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
   }
 
+  // If user is authenticated and redirectIfAuth is true, redirect to appropriate dashboard
   if (user && redirectIfAuth) {
-    if (user.role === 'owner') return <Navigate to="/owner/dashboard" replace />;
-    if (user.role === 'admin') return <Navigate to="/admin/dashboard" replace />;
-    if (user.role === 'student') return <Navigate to="/exam-access" replace />;
+    if (user.role === 'owner') {
+      return <Navigate to="/owner/dashboard" replace />;
+    }
+    if (user.role === 'admin') {
+      return <Navigate to="/admin/dashboard" replace />;
+    }
+    if (user.role === 'student') {
+      return <Navigate to="/student/dashboard" replace />;
+    }
   }
 
   return children;
@@ -80,7 +94,14 @@ const PublicRoute = ({ children, redirectIfAuth }) => {
 const AppRouter = () => {
   return (
     <Routes>
-      <Route path="/" element={<Login />} />
+      <Route
+        path="/"
+        element={
+          <PublicRoute redirectIfAuth>
+            <Login />
+          </PublicRoute>
+        }
+      />
 
       <Route
         path="/owner/login"
@@ -135,7 +156,7 @@ const AppRouter = () => {
       <Route
         path="/exam-access"
         element={
-          <PublicRoute>
+          <PublicRoute redirectIfAuth>
             <ExamAccess />
           </PublicRoute>
         }
@@ -151,6 +172,8 @@ const AppRouter = () => {
         <Route path="dashboard" element={<StudentDashboard />} />
         <Route path="profile" element={<StudentProfile />} />
         <Route path="tests" element={<StudentTests />} />
+        <Route path="history" element={<StudentHistory />} />
+        <Route path="settings" element={<StudentProfile />} />
       </Route>
       <Route
         path="/exam/:key"

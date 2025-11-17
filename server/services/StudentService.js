@@ -63,22 +63,56 @@ export class StudentService {
     }
     return {
       id: student.id,
-      email: student.email,
-      fullName: student.fullName,
-      createdAt: student.createdAt,
-      lastLogin: student.lastLogin
+      full_name: student.full_name || student.fullName || '',
+      username: student.username || student.login || '',
+      email: student.email || '',
+      phone: student.phone || '',
+      birth_date: student.birth_date || '',
+      region: student.region || '',
+      gender: student.gender || '',
+      registered_at: student.registered_at || student.registration_date || student.createdAt || '',
+      last_login: student.last_login || student.lastLogin || null,
+      used_admin_key: student.used_admin_key || '',
+      test_status: student.test_status || 'not_taken',
+      test_score: student.test_score || '',
+      test_history: student.test_history || [],
     };
   }
 
   static async updateProfile(studentId, data) {
-    const student = await Student.update(studentId, data);
+    const student = await Student.findById(studentId);
     if (!student) {
       throw new Error('Student not found');
     }
+
+    // Update allowed fields
+    const updateData = {
+      full_name: data.fullName || data.full_name,
+      phone: data.phone,
+      email: data.email,
+      region: data.region,
+      gender: data.gender,
+    };
+
+    // Only update password if provided
+    if (data.password) {
+      updateData.password = data.password;
+    }
+
+    const updated = await Student.update(studentId, updateData);
+    if (!updated) {
+      throw new Error('Failed to update profile');
+    }
+
     return {
-      id: student.id,
-      email: student.email,
-      fullName: student.fullName
+      id: updated.id,
+      full_name: updated.full_name || updated.fullName || '',
+      username: updated.username || updated.login || '',
+      email: updated.email || '',
+      phone: updated.phone || '',
+      birth_date: updated.birth_date || '',
+      region: updated.region || '',
+      gender: updated.gender || '',
     };
   }
 
@@ -165,11 +199,14 @@ export class StudentService {
     return { isActive: test.isActive };
   }
 
-  static async accessTest(testKey, fullName) {
+  static async accessTest(testKey, fullName, studentId = null) {
     const keyRecord = await TestKeyModel.findByKey(testKey);
     if (!keyRecord || !keyRecord.isActive) {
       throw new Error('Invalid or inactive test key');
     }
+
+    // Get admin ID from test key to determine which admin's key this is
+    const adminId = keyRecord.adminId;
 
     if (keyRecord.usedBy && keyRecord.usedBy !== fullName) {
       throw new Error('Test key already used by another student');
@@ -180,15 +217,32 @@ export class StudentService {
       throw new Error('Test is not active');
     }
 
-    let attempt = await Attempt.findByTestKey(testKey);
-    let studentId = null;
+    // Find student - try by ID first, then by name
+    let student = null;
+    if (studentId) {
+      student = await Student.findById(studentId);
+    }
     
-    const db = await import('../config/database.js').then(m => m.loadDb());
-    const student = db.students.find(s => s.fullName === fullName);
-    if (student) {
-      studentId = student.id;
+    if (!student) {
+      // Try to find by name/email
+      student = await Student.findByLogin(fullName) || 
+                await Student.findByEmail(fullName);
     }
 
+    // If student found, UPDATE their JSON file with used_admin_key
+    if (student) {
+      // Update student's used_admin_key field - CRITICAL: Update existing file, don't create new
+      await Student.updateAdminKey(student.id, testKey);
+      
+      // Also update test status to 'in_progress'
+      await Student.updateTestStatus(student.id, 'in_progress');
+      
+      studentId = student.id;
+      logger.info(`Updated student ${student.id} with admin key: ${testKey}`);
+    }
+
+    let attempt = await Attempt.findByTestKey(testKey);
+    
     if (!attempt) {
       let assignedMocId = null;
       if (test.mocIds && test.mocIds.length > 0) {

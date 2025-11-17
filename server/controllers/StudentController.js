@@ -75,8 +75,10 @@ export class StudentController {
 
   static async accessTest(req, res, next) {
     try {
-      const { testKey, fullName } = req.body;
-      const result = await StudentService.accessTest(testKey, fullName);
+      const { testKey, fullName, studentId } = req.body;
+      // If user is authenticated, use their ID, otherwise use studentId from body
+      const finalStudentId = req.user?.id || studentId || null;
+      const result = await StudentService.accessTest(testKey, fullName, finalStudentId);
       res.json(result);
     } catch (error) {
       logger.error('Student access error:', error);

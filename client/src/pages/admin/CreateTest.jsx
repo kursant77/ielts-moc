@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { adminApi } from '../../api/adminApi';
-import { parseJSON, parseXLSX, parseCSV, parseTextFile } from '../../utils/fileParser';
+import { parseJSON, parseXLSX, parseCSV, parseTextFile, parsePDF, parseDOCX } from '../../utils/fileParser';
 import Card from '../../components/Card';
 import Input from '../../components/Input';
 import Button from '../../components/Button';
@@ -12,15 +12,14 @@ import Progress from '../../components/Progress';
 import { showToast } from '../../components/Toast';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
-import { ChevronLeft, ChevronRight, Save } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Save, Edit2, Check } from 'lucide-react';
 
 const STEPS = [
-  { id: 1, name: 'Basic Info' },
+  { id: 1, name: 'Introduction' },
   { id: 2, name: 'Reading' },
   { id: 3, name: 'Listening' },
   { id: 4, name: 'Writing' },
-  { id: 5, name: 'Answer Key' },
-  { id: 6, name: 'Preview' },
+  { id: 5, name: 'Preview' },
 ];
 
 const CreateTest = () => {
@@ -29,6 +28,8 @@ const CreateTest = () => {
   const [loading, setLoading] = useState(false);
   const [testKey, setTestKey] = useState(null);
   const [testId, setTestId] = useState(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editSection, setEditSection] = useState(null);
   const [testData, setTestData] = useState({
     title: '',
     description: '',
@@ -38,15 +39,20 @@ const CreateTest = () => {
       content: '',
       paragraphs: [],
       questions: [],
+      answers: '', // Comma-separated answers
     },
     listening: {
-      scriptFile: null,
       audioFile: null,
+      scriptFile: null,
       content: '',
       questions: [],
+      answers: '', // Comma-separated answers
     },
     writing: {
-      tasks: [],
+      tasks: [
+        { id: Date.now(), title: '', content: '' },
+        { id: Date.now() + 1, title: '', content: '' },
+      ],
     },
     answerKey: {
       reading: {},
@@ -54,6 +60,27 @@ const CreateTest = () => {
       writing: {},
     },
   });
+
+  // Parse comma-separated answers into answerKey object
+  const parseAnswers = (answersString, section) => {
+    const answers = answersString.split(',').map(a => a.trim()).filter(a => a);
+    const answerKey = {};
+    testData[section].questions.forEach((q, idx) => {
+      if (answers[idx] !== undefined) {
+        answerKey[q.id || idx + 1] = answers[idx];
+      }
+    });
+    return answerKey;
+  };
+
+  // Update answers string when questions change
+  const updateAnswersFromKey = (section) => {
+    const answerKey = testData.answerKey[section];
+    const answersArray = testData[section].questions.map((q, idx) => {
+      return answerKey[q.id || idx + 1] || '';
+    });
+    return answersArray.join(', ');
+  };
 
   const handleFileUpload = async (file, section, type) => {
     try {
@@ -67,30 +94,72 @@ const CreateTest = () => {
           parsedData = await parseXLSX(file);
         } else if (ext === 'csv') {
           parsedData = await parseCSV(file);
+        } else if (ext === 'pdf') {
+          parsedData = await parsePDF(file);
+        } else if (ext === 'docx' || ext === 'doc') {
+          parsedData = await parseDOCX(file);
         } else {
           showToast('Unsupported file format', 'error');
           return;
         }
 
         if (parsedData.questions) {
+          setTestData(prev => {
+            const newQuestions = parsedData.questions.map((q, idx) => ({
+              ...q,
+              id: q.id || Date.now() + idx,
+            }));
+            
+            // Extract answers from questions if available
+            const newAnswerKey = newQuestions.reduce((acc, q, idx) => {
+              if (q.answer !== undefined && q.answer !== null) {
+                acc[q.id || idx + 1] = typeof q.answer === 'number' 
+                  ? String.fromCharCode(65 + q.answer) 
+                  : String(q.answer);
+              }
+              return acc;
+            }, {});
+            
+            return {
+              ...prev,
+              [section]: {
+                ...prev[section],
+                questions: newQuestions,
+                file: file,
+                // If text content is available (from PDF/DOCX), add it
+                content: parsedData.text || prev[section].content,
+                paragraphs: parsedData.paragraphs || prev[section].paragraphs,
+              },
+              answerKey: {
+                ...prev.answerKey,
+                [section]: { ...prev.answerKey[section], ...newAnswerKey },
+              },
+            };
+          });
+          showToast('Test file parsed successfully', 'success');
+        } else if (parsedData.text) {
+          // If file has text but no questions, just store the content
           setTestData(prev => ({
             ...prev,
             [section]: {
               ...prev[section],
-              questions: parsedData.questions,
-            },
-            answerKey: {
-              ...prev.answerKey,
-              [section]: parsedData.questions.reduce((acc, q, idx) => {
-                acc[q.id || idx + 1] = q.answer;
-                return acc;
-              }, {}),
+              content: parsedData.text,
+              paragraphs: parsedData.paragraphs || [],
+              file: file,
             },
           }));
-          showToast('Test file parsed successfully', 'success');
+          showToast('File content extracted successfully', 'success');
         }
       } else if (type === 'text') {
-        parsedData = await parseTextFile(file);
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (ext === 'pdf') {
+          parsedData = await parsePDF(file);
+        } else if (ext === 'docx' || ext === 'doc') {
+          parsedData = await parseDOCX(file);
+        } else {
+          parsedData = await parseTextFile(file);
+        }
+        
         setTestData(prev => ({
           ...prev,
           [section]: {
@@ -98,15 +167,31 @@ const CreateTest = () => {
             content: parsedData.text,
             paragraphs: parsedData.paragraphs,
             file: file,
+            // If questions were extracted, add them
+            questions: parsedData.questions && parsedData.questions.length > 0 
+              ? parsedData.questions.map((q, idx) => ({
+                  ...q,
+                  id: q.id || Date.now() + idx,
+                }))
+              : prev[section].questions,
           },
         }));
         showToast('File uploaded and parsed', 'success');
+      } else if (type === 'audio') {
+        setTestData(prev => ({
+          ...prev,
+          [section]: {
+            ...prev[section],
+            audioFile: file,
+          },
+        }));
+        showToast('Audio file uploaded', 'success');
       } else {
         setTestData(prev => ({
           ...prev,
           [section]: {
             ...prev[section],
-            [type === 'audio' ? 'audioFile' : 'scriptFile']: file,
+            [type === 'script' ? 'scriptFile' : 'file']: file,
           },
         }));
         showToast('File uploaded', 'success');
@@ -116,61 +201,97 @@ const CreateTest = () => {
     }
   };
 
-  const addQuestion = (section) => {
-    const newQuestion = {
-      id: Date.now(),
-      question: '',
-      options: ['', '', '', ''],
-      answer: 0,
-    };
-    setTestData(prev => ({
-      ...prev,
-      [section]: {
-        ...prev[section],
-        questions: [...prev[section].questions, newQuestion],
-      },
-    }));
+  const handleAnswersChange = (section, answersString) => {
+    setTestData(prev => {
+      const answerKey = parseAnswers(answersString, section);
+      return {
+        ...prev,
+        [section]: {
+          ...prev[section],
+          answers: answersString,
+        },
+        answerKey: {
+          ...prev.answerKey,
+          [section]: answerKey,
+        },
+      };
+    });
   };
 
-  const updateQuestion = (section, questionId, field, value) => {
-    setTestData(prev => ({
-      ...prev,
-      [section]: {
-        ...prev[section],
-        questions: prev[section].questions.map(q =>
-          q.id === questionId ? { ...q, [field]: value } : q
-        ),
-      },
-    }));
-  };
-
-  const removeQuestion = (section, questionId) => {
-    setTestData(prev => ({
-      ...prev,
-      [section]: {
-        ...prev[section],
-        questions: prev[section].questions.filter(q => q.id !== questionId),
-      },
-      answerKey: {
+  const selectVariant = (section, questionId, variantIndex) => {
+    const variantLetter = String.fromCharCode(65 + variantIndex);
+    setTestData(prev => {
+      const newAnswerKey = {
         ...prev.answerKey,
-        [section]: Object.fromEntries(
-          Object.entries(prev.answerKey[section]).filter(([key]) => key !== String(questionId))
-        ),
-      },
-    }));
+        [section]: {
+          ...prev.answerKey[section],
+          [questionId]: variantLetter,
+        },
+      };
+      
+      // Update answers string
+      const answersArray = prev[section].questions.map((q, idx) => {
+        if (q.id === questionId) {
+          return variantLetter;
+        }
+        return newAnswerKey[section][q.id || idx + 1] || '';
+      });
+      
+      return {
+        ...prev,
+        answerKey: newAnswerKey,
+        [section]: {
+          ...prev[section],
+          answers: answersArray.join(', '),
+        },
+      };
+    });
   };
 
   const handleSubmit = async () => {
     setLoading(true);
     try {
-      const response = await adminApi.createTest(testData);
+      // Ensure writing has exactly 2 tasks
+      if (testData.writing.tasks.length !== 2) {
+        showToast('Writing section must have exactly 2 tasks', 'error');
+        setLoading(false);
+        return;
+      }
+
+      // Parse answers before submitting
+      const finalAnswerKey = {
+        reading: parseAnswers(testData.reading.answers || '', 'reading'),
+        listening: parseAnswers(testData.listening.answers || '', 'listening'),
+        writing: testData.answerKey.writing || {},
+      };
+
+      const submitData = {
+        ...testData,
+        answerKey: finalAnswerKey,
+      };
+
+      const response = await adminApi.createTest(submitData);
+      
       if (response.data.testKey) {
         setTestKey(response.data.testKey);
-        setTestId(response.data.testId);
+        setTestId(response.data.testId || response.data.id);
         showToast('Test created successfully! Test key generated.', 'success');
       } else {
-        showToast('Test created successfully', 'success');
-        navigate('/admin/tests');
+        // Auto-generate key if not provided
+        if (response.data.id) {
+          try {
+            const keyResponse = await adminApi.generateTestKey(response.data.id);
+            setTestKey(keyResponse.data.key || keyResponse.data.testKey);
+            setTestId(response.data.id);
+            showToast('Test created and key generated successfully!', 'success');
+          } catch (keyError) {
+            showToast('Test created successfully', 'success');
+            navigate('/admin/tests');
+          }
+        } else {
+          showToast('Test created successfully', 'success');
+          navigate('/admin/tests');
+        }
       }
     } catch (error) {
       showToast(error.response?.data?.error || 'Failed to create test', 'error');
@@ -179,29 +300,59 @@ const CreateTest = () => {
     }
   };
 
-  const handlePublish = async () => {
-    if (!testId) return;
-    setLoading(true);
-    try {
-      await adminApi.publishTest(testId);
-      showToast('Test published successfully', 'success');
-      navigate('/admin/tests');
-    } catch (error) {
-      showToast(error.response?.data?.error || 'Failed to publish test', 'error');
-    } finally {
-      setLoading(false);
+  const handleEdit = (section) => {
+    setEditSection(section);
+    setIsEditing(true);
+    // Navigate to the appropriate step
+    const stepMap = {
+      'basic': 1,
+      'reading': 2,
+      'listening': 3,
+      'writing': 4,
+    };
+    if (stepMap[section]) {
+      setCurrentStep(stepMap[section]);
     }
   };
 
   const nextStep = () => {
+    // Validation
+    if (currentStep === 1) {
+      if (!testData.title.trim()) {
+        showToast('Please enter test title', 'error');
+        return;
+      }
+    } else if (currentStep === 2) {
+      if (testData.reading.questions.length === 0) {
+        showToast('Please add reading questions', 'error');
+        return;
+      }
+    } else if (currentStep === 3) {
+      if (testData.listening.questions.length === 0) {
+        showToast('Please add listening questions', 'error');
+        return;
+      }
+    } else if (currentStep === 4) {
+      if (testData.writing.tasks.length !== 2 || 
+          !testData.writing.tasks[0].title.trim() || 
+          !testData.writing.tasks[1].title.trim()) {
+        showToast('Writing section must have 2 complete tasks', 'error');
+        return;
+      }
+    }
+    
     if (currentStep < STEPS.length) {
       setCurrentStep(currentStep + 1);
+      setIsEditing(false);
+      setEditSection(null);
     }
   };
 
   const prevStep = () => {
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
+      setIsEditing(false);
+      setEditSection(null);
     }
   };
 
@@ -257,18 +408,26 @@ const CreateTest = () => {
                     value={testData.title}
                     onChange={(e) => setTestData({ ...testData, title: e.target.value })}
                     required
+                    placeholder="Enter test title"
                   />
-                  <Input
-                    label="Description"
-                    value={testData.description}
-                    onChange={(e) => setTestData({ ...testData, description: e.target.value })}
-                  />
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Description
+                    </label>
+                    <ReactQuill
+                      theme="snow"
+                      value={testData.description}
+                      onChange={(value) => setTestData({ ...testData, description: value })}
+                      placeholder="Enter test description"
+                    />
+                  </div>
                   <Input
                     type="number"
                     label="Duration (minutes)"
                     value={testData.duration}
-                    onChange={(e) => setTestData({ ...testData, duration: parseInt(e.target.value) })}
+                    onChange={(e) => setTestData({ ...testData, duration: parseInt(e.target.value) || 180 })}
                     required
+                    min={1}
                   />
                 </div>
               </Form>
@@ -283,74 +442,104 @@ const CreateTest = () => {
               exit={{ opacity: 0, x: -20 }}
             >
               <div className="space-y-6">
-                <FileUploader
-                  label="Upload Reading File (PDF, TXT, DOCX)"
-                  accept=".pdf,.txt,.doc,.docx"
-                  onFileSelect={(file) => handleFileUpload(file, 'reading', 'text')}
-                />
-                
-                {testData.reading.content && (
-                  <div className="mt-4">
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      Reading Content
-                    </label>
-                    <div className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-800 max-h-96 overflow-y-auto">
-                      <ReactQuill
-                        theme="snow"
-                        value={testData.reading.content}
-                        onChange={(value) => setTestData(prev => ({
-                          ...prev,
-                          reading: { ...prev.reading, content: value }
-                        }))}
-                      />
-                    </div>
-                  </div>
-                )}
-
                 <div>
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-semibold text-gray-900 dark:text-white">Questions</h3>
-                    <Button size="sm" onClick={() => addQuestion('reading')}>
-                      Add Question
-                    </Button>
-                  </div>
-                  <div className="space-y-4">
-                    {testData.reading.questions.map((q, idx) => (
-                      <Card key={q.id} className="p-4">
-                        <div className="flex justify-between items-start mb-3">
-                          <span className="font-medium">Question {idx + 1}</span>
-                          <Button size="sm" variant="danger" onClick={() => removeQuestion('reading', q.id)}>
-                            Remove
-                          </Button>
-                        </div>
-                        <Input
-                          label="Question Text"
-                          value={q.question}
-                          onChange={(e) => updateQuestion('reading', q.id, 'question', e.target.value)}
-                          className="mb-3"
-                        />
-                        <div className="space-y-2 mb-3">
-                          {q.options.map((opt, optIdx) => (
-                            <Input
-                              key={optIdx}
-                              label={`Option ${String.fromCharCode(65 + optIdx)}`}
-                              value={opt}
-                              onChange={(e) => {
-                                const newOptions = [...q.options];
-                                newOptions[optIdx] = e.target.value;
-                                updateQuestion('reading', q.id, 'options', newOptions);
-                              }}
+                  <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">
+                    Reading Section
+                  </h3>
+                  
+                  <FileUploader
+                    label="Upload Reading Questions File (JSON, XLSX, CSV, PDF, DOCX)"
+                    accept=".json,.xlsx,.xls,.csv,.pdf,.docx,.doc"
+                    onFileSelect={(file) => handleFileUpload(file, 'reading', 'test')}
+                    description="Upload a file containing reading questions. Supported formats: JSON, Excel, CSV, PDF, Word. Variants will be automatically detected."
+                  />
+
+                  {testData.reading.file && (
+                    <div className="mt-4 space-y-3">
+                      <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                        <p className="text-sm text-green-800 dark:text-green-300">
+                          ✓ File uploaded: {testData.reading.file.name}
+                        </p>
+                      </div>
+                      
+                      {testData.reading.content && (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            File Content (Editable)
+                          </label>
+                          <div className="border rounded-lg bg-gray-50 dark:bg-gray-800">
+                            <ReactQuill
+                              theme="snow"
+                              value={testData.reading.content}
+                              onChange={(value) => setTestData(prev => ({
+                                ...prev,
+                                reading: { ...prev.reading, content: value }
+                              }))}
+                              className="bg-white dark:bg-gray-800"
+                              placeholder="File content will appear here. You can edit it."
                             />
-                          ))}
+                          </div>
                         </div>
-                        <Input
-                          type="number"
-                          label="Correct Answer (0-3)"
-                          value={q.answer}
-                          onChange={(e) => updateQuestion('reading', q.id, 'answer', parseInt(e.target.value))}
-                        />
-                      </Card>
-                    ))}
+                      )}
+                    </div>
+                  )}
+
+                  {testData.reading.questions.length > 0 && (
+                    <div className="mt-6 space-y-4">
+                      <h4 className="font-semibold text-gray-900 dark:text-white">
+                        Questions ({testData.reading.questions.length})
+                      </h4>
+                      {testData.reading.questions.map((q, idx) => (
+                        <Card key={q.id} className="p-4">
+                          <div className="mb-3">
+                            <p className="font-medium text-gray-900 dark:text-white mb-2">
+                              Question {idx + 1}: {q.question}
+                            </p>
+                            {q.options && q.options.length > 0 && (
+                              <div className="space-y-2 mt-3">
+                                <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                  Variants:
+                                </p>
+                                <div className="grid grid-cols-2 gap-2">
+                                  {q.options.map((opt, optIdx) => {
+                                    const variantLetter = String.fromCharCode(65 + optIdx);
+                                    const isSelected = testData.answerKey.reading[q.id] === variantLetter;
+                                    return (
+                                      <button
+                                        key={optIdx}
+                                        onClick={() => selectVariant('reading', q.id, optIdx)}
+                                        className={`p-3 text-left rounded-lg border-2 transition-all ${
+                                          isSelected
+                                            ? 'border-primary-600 bg-primary-50 dark:bg-primary-900/20 text-primary-900 dark:text-primary-100'
+                                            : 'border-gray-200 dark:border-gray-700 hover:border-primary-300 dark:hover:border-primary-700'
+                                        }`}
+                                      >
+                                        <span className="font-medium">{variantLetter}.</span> {opt}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="mt-6">
+                    <Input
+                      label="Reading Answers (comma-separated)"
+                      value={testData.reading.answers || ''}
+                      onChange={(e) => handleAnswersChange('reading', e.target.value)}
+                      placeholder="a,b,c,asadbek,asad,..."
+                      helperText="Enter all answers separated by commas. Example: a,b,c,asadbek,asad"
+                    />
+                    {testData.reading.questions.length > 0 && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        {testData.reading.questions.length} questions expected
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -365,70 +554,125 @@ const CreateTest = () => {
               exit={{ opacity: 0, x: -20 }}
             >
               <div className="space-y-6">
-                <FileUploader
-                  label="Upload Listening Script File"
-                  accept=".pdf,.txt,.doc,.docx"
-                  onFileSelect={(file) => handleFileUpload(file, 'listening', 'text')}
-                />
-                <FileUploader
-                  label="Upload Listening Audio File"
-                  accept="audio/*"
-                  onFileSelect={(file) => handleFileUpload(file, 'listening', 'audio')}
-                />
-
-                {testData.listening.audioFile && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      Audio Preview
-                    </label>
-                    <audio controls src={URL.createObjectURL(testData.listening.audioFile)} className="w-full" />
-                  </div>
-                )}
-
                 <div>
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-semibold text-gray-900 dark:text-white">Questions</h3>
-                    <Button size="sm" onClick={() => addQuestion('listening')}>
-                      Add Question
-                    </Button>
-                  </div>
-                  <div className="space-y-4">
-                    {testData.listening.questions.map((q, idx) => (
-                      <Card key={q.id} className="p-4">
-                        <div className="flex justify-between items-start mb-3">
-                          <span className="font-medium">Question {idx + 1}</span>
-                          <Button size="sm" variant="danger" onClick={() => removeQuestion('listening', q.id)}>
-                            Remove
-                          </Button>
-                        </div>
-                        <Input
-                          label="Question Text"
-                          value={q.question}
-                          onChange={(e) => updateQuestion('listening', q.id, 'question', e.target.value)}
-                          className="mb-3"
-                        />
-                        <div className="space-y-2 mb-3">
-                          {q.options.map((opt, optIdx) => (
-                            <Input
-                              key={optIdx}
-                              label={`Option ${String.fromCharCode(65 + optIdx)}`}
-                              value={opt}
-                              onChange={(e) => {
-                                const newOptions = [...q.options];
-                                newOptions[optIdx] = e.target.value;
-                                updateQuestion('listening', q.id, 'options', newOptions);
-                              }}
+                  <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">
+                    Listening Section
+                  </h3>
+                  
+                  <FileUploader
+                    label="Upload Listening Audio File"
+                    accept="audio/*"
+                    onFileSelect={(file) => handleFileUpload(file, 'listening', 'audio')}
+                    description="Upload the main audio file for listening section"
+                  />
+
+                  {testData.listening.audioFile && (
+                    <div className="mt-4">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Audio Preview
+                      </label>
+                      <audio 
+                        controls 
+                        src={URL.createObjectURL(testData.listening.audioFile)} 
+                        className="w-full"
+                      />
+                    </div>
+                  )}
+
+                  <FileUploader
+                    label="Upload Listening Questions File (JSON, XLSX, CSV, PDF, DOCX)"
+                    accept=".json,.xlsx,.xls,.csv,.pdf,.docx,.doc"
+                    onFileSelect={(file) => handleFileUpload(file, 'listening', 'test')}
+                    description="Upload a file containing listening questions. Supported formats: JSON, Excel, CSV, PDF, Word."
+                    className="mt-4"
+                  />
+
+                  {testData.listening.scriptFile && (
+                    <div className="mt-4 space-y-3">
+                      <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                        <p className="text-sm text-green-800 dark:text-green-300">
+                          ✓ Script file uploaded: {testData.listening.scriptFile.name}
+                        </p>
+                      </div>
+                      
+                      {testData.listening.content && (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Script Content (Editable)
+                          </label>
+                          <div className="border rounded-lg bg-gray-50 dark:bg-gray-800">
+                            <ReactQuill
+                              theme="snow"
+                              value={testData.listening.content}
+                              onChange={(value) => setTestData(prev => ({
+                                ...prev,
+                                listening: { ...prev.listening, content: value }
+                              }))}
+                              className="bg-white dark:bg-gray-800"
+                              placeholder="Script content will appear here. You can edit it."
                             />
-                          ))}
+                          </div>
                         </div>
-                        <Input
-                          type="number"
-                          label="Correct Answer (0-3)"
-                          value={q.answer}
-                          onChange={(e) => updateQuestion('listening', q.id, 'answer', parseInt(e.target.value))}
-                        />
-                      </Card>
-                    ))}
+                      )}
+                    </div>
+                  )}
+
+                  {testData.listening.questions.length > 0 && (
+                    <div className="mt-6 space-y-4">
+                      <h4 className="font-semibold text-gray-900 dark:text-white">
+                        Questions ({testData.listening.questions.length})
+                      </h4>
+                      {testData.listening.questions.map((q, idx) => (
+                        <Card key={q.id} className="p-4">
+                          <div className="mb-3">
+                            <p className="font-medium text-gray-900 dark:text-white mb-2">
+                              Question {idx + 1}: {q.question}
+                            </p>
+                            {q.options && q.options.length > 0 && (
+                              <div className="space-y-2 mt-3">
+                                <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                  Variants:
+                                </p>
+                                <div className="grid grid-cols-2 gap-2">
+                                  {q.options.map((opt, optIdx) => {
+                                    const variantLetter = String.fromCharCode(65 + optIdx);
+                                    const isSelected = testData.answerKey.listening[q.id] === variantLetter;
+                                    return (
+                                      <button
+                                        key={optIdx}
+                                        onClick={() => selectVariant('listening', q.id, optIdx)}
+                                        className={`p-3 text-left rounded-lg border-2 transition-all ${
+                                          isSelected
+                                            ? 'border-primary-600 bg-primary-50 dark:bg-primary-900/20 text-primary-900 dark:text-primary-100'
+                                            : 'border-gray-200 dark:border-gray-700 hover:border-primary-300 dark:hover:border-primary-700'
+                                        }`}
+                                      >
+                                        <span className="font-medium">{variantLetter}.</span> {opt}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="mt-6">
+                    <Input
+                      label="Listening Answers (comma-separated)"
+                      value={testData.listening.answers || ''}
+                      onChange={(e) => handleAnswersChange('listening', e.target.value)}
+                      placeholder="a,b,c,asadbek,asad,..."
+                      helperText="Enter all answers separated by commas. Example: a,b,c,asadbek,asad"
+                    />
+                    {testData.listening.questions.length > 0 && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        {testData.listening.questions.length} questions expected
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -443,33 +687,16 @@ const CreateTest = () => {
               exit={{ opacity: 0, x: -20 }}
             >
               <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-semibold text-gray-900 dark:text-white">Writing Tasks</h3>
-                  <Button size="sm" onClick={() => {
-                    setTestData(prev => ({
-                      ...prev,
-                      writing: {
-                        tasks: [...prev.writing.tasks, { id: Date.now(), title: '', content: '' }]
-                      }
-                    }));
-                  }}>
-                    Add Task
-                  </Button>
-                </div>
+                <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">
+                  Writing Section (2 Tasks Required)
+                </h3>
+                
                 {testData.writing.tasks.map((task, idx) => (
                   <Card key={task.id} className="p-4">
-                    <div className="flex justify-between items-start mb-3">
-                      <span className="font-medium">Task {idx + 1}</span>
-                      <Button size="sm" variant="danger" onClick={() => {
-                        setTestData(prev => ({
-                          ...prev,
-                          writing: {
-                            tasks: prev.writing.tasks.filter(t => t.id !== task.id)
-                          }
-                        }));
-                      }}>
-                        Remove
-                      </Button>
+                    <div className="mb-3">
+                      <span className="font-medium text-gray-900 dark:text-white">
+                        Task {idx + 1}
+                      </span>
                     </div>
                     <Input
                       label="Task Title"
@@ -480,6 +707,8 @@ const CreateTest = () => {
                         setTestData(prev => ({ ...prev, writing: { tasks: newTasks } }));
                       }}
                       className="mb-3"
+                      placeholder={`Enter Task ${idx + 1} title`}
+                      required
                     />
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -493,10 +722,17 @@ const CreateTest = () => {
                           newTasks[idx].content = value;
                           setTestData(prev => ({ ...prev, writing: { tasks: newTasks } }));
                         }}
+                        placeholder={`Enter Task ${idx + 1} content/instructions`}
                       />
                     </div>
                   </Card>
                 ))}
+                
+                <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                  <p className="text-sm text-blue-800 dark:text-blue-300">
+                    ℹ️ Writing section must contain exactly 2 tasks. Both tasks are required.
+                  </p>
+                </div>
               </div>
             </motion.div>
           )}
@@ -509,93 +745,152 @@ const CreateTest = () => {
               exit={{ opacity: 0, x: -20 }}
             >
               <div className="space-y-6">
-                <Card title="Reading Answer Key">
-                  <div className="space-y-2">
-                    {testData.reading.questions.map((q, idx) => (
-                      <div key={q.id} className="flex items-center gap-4">
-                        <span className="w-24 font-medium">Q{idx + 1}:</span>
-                        <Input
-                          type="text"
-                          value={testData.answerKey.reading[q.id] || ''}
-                          onChange={(e) => setTestData(prev => ({
-                            ...prev,
-                            answerKey: {
-                              ...prev.answerKey,
-                              reading: { ...prev.answerKey.reading, [q.id]: e.target.value }
-                            }
-                          }))}
-                          className="flex-1"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </Card>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                    Test Preview
+                  </h3>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setIsEditing(!isEditing)}
+                  >
+                    <Edit2 className="w-4 h-4 mr-2" />
+                    {isEditing ? 'Done Editing' : 'Edit'}
+                  </Button>
+                </div>
 
-                <Card title="Listening Answer Key">
-                  <div className="space-y-2">
-                    {testData.listening.questions.map((q, idx) => (
-                      <div key={q.id} className="flex items-center gap-4">
-                        <span className="w-24 font-medium">Q{idx + 1}:</span>
-                        <Input
-                          type="text"
-                          value={testData.answerKey.listening[q.id] || ''}
-                          onChange={(e) => setTestData(prev => ({
-                            ...prev,
-                            answerKey: {
-                              ...prev.answerKey,
-                              listening: { ...prev.answerKey.listening, [q.id]: e.target.value }
-                            }
-                          }))}
-                          className="flex-1"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-              </div>
-            </motion.div>
-          )}
-
-          {currentStep === 6 && (
-            <motion.div
-              key="step6"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-            >
-              <div className="space-y-6">
                 <Card>
-                  <h3 className="text-lg font-semibold mb-4">Test Preview</h3>
-                  <div className="space-y-4">
+                  <div className="space-y-6">
+                    {/* Basic Information */}
                     <div>
-                      <h3 className="font-semibold mb-2">Basic Information</h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        Title: {testData.title}
-                      </p>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        Description: {testData.description || 'No description'}
-                      </p>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        Duration: {testData.duration} minutes
-                      </p>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-semibold text-gray-900 dark:text-white">
+                          Basic Information
+                        </h4>
+                        {isEditing && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => handleEdit('basic')}
+                          >
+                            <Edit2 className="w-4 h-4 mr-1" />
+                            Edit
+                          </Button>
+                        )}
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        <p className="text-gray-600 dark:text-gray-400">
+                          <span className="font-medium">Title:</span> {testData.title || 'Not set'}
+                        </p>
+                        <p className="text-gray-600 dark:text-gray-400">
+                          <span className="font-medium">Description:</span>{' '}
+                          {testData.description ? (
+                            <div 
+                              className="inline-block"
+                              dangerouslySetInnerHTML={{ __html: testData.description }}
+                            />
+                          ) : (
+                            'Not set'
+                          )}
+                        </p>
+                        <p className="text-gray-600 dark:text-gray-400">
+                          <span className="font-medium">Duration:</span> {testData.duration} minutes
+                        </p>
+                      </div>
                     </div>
+
+                    {/* Reading Section */}
                     <div>
-                      <h3 className="font-semibold mb-2">Reading Section</h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        {testData.reading.questions.length} questions
-                      </p>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-semibold text-gray-900 dark:text-white">
+                          Reading Section
+                        </h4>
+                        {isEditing && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => handleEdit('reading')}
+                          >
+                            <Edit2 className="w-4 h-4 mr-1" />
+                            Edit
+                          </Button>
+                        )}
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        <p className="text-gray-600 dark:text-gray-400">
+                          <span className="font-medium">Questions:</span> {testData.reading.questions.length}
+                        </p>
+                        <p className="text-gray-600 dark:text-gray-400">
+                          <span className="font-medium">Answers:</span>{' '}
+                          {testData.reading.answers || 'Not set'}
+                        </p>
+                      </div>
                     </div>
+
+                    {/* Listening Section */}
                     <div>
-                      <h3 className="font-semibold mb-2">Listening Section</h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        {testData.listening.questions.length} questions
-                      </p>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-semibold text-gray-900 dark:text-white">
+                          Listening Section
+                        </h4>
+                        {isEditing && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => handleEdit('listening')}
+                          >
+                            <Edit2 className="w-4 h-4 mr-1" />
+                            Edit
+                          </Button>
+                        )}
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        <p className="text-gray-600 dark:text-gray-400">
+                          <span className="font-medium">Audio:</span>{' '}
+                          {testData.listening.audioFile ? testData.listening.audioFile.name : 'Not uploaded'}
+                        </p>
+                        <p className="text-gray-600 dark:text-gray-400">
+                          <span className="font-medium">Questions:</span> {testData.listening.questions.length}
+                        </p>
+                        <p className="text-gray-600 dark:text-gray-400">
+                          <span className="font-medium">Answers:</span>{' '}
+                          {testData.listening.answers || 'Not set'}
+                        </p>
+                      </div>
                     </div>
+
+                    {/* Writing Section */}
                     <div>
-                      <h3 className="font-semibold mb-2">Writing Section</h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        {testData.writing.tasks.length} tasks
-                      </p>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-semibold text-gray-900 dark:text-white">
+                          Writing Section
+                        </h4>
+                        {isEditing && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => handleEdit('writing')}
+                          >
+                            <Edit2 className="w-4 h-4 mr-1" />
+                            Edit
+                          </Button>
+                        )}
+                      </div>
+                      <div className="space-y-3 text-sm">
+                        {testData.writing.tasks.map((task, idx) => (
+                          <div key={task.id} className="border rounded-lg p-3 bg-gray-50 dark:bg-gray-800">
+                            <p className="font-medium text-gray-900 dark:text-white mb-1">
+                              Task {idx + 1}: {task.title || 'Not set'}
+                            </p>
+                            {task.content && (
+                              <div
+                                className="text-gray-600 dark:text-gray-400"
+                                dangerouslySetInnerHTML={{ __html: task.content }}
+                              />
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </Card>
@@ -603,7 +898,7 @@ const CreateTest = () => {
                 {testKey && (
                   <Card className="bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800">
                     <h3 className="text-lg font-semibold mb-4 text-green-900 dark:text-green-300">
-                      Test Key Generated
+                      ✓ Test Key Generated
                     </h3>
                     <div className="space-y-4">
                       <div>
@@ -630,9 +925,6 @@ const CreateTest = () => {
                           Share this key with students to access the test
                         </p>
                       </div>
-                      <Button onClick={handlePublish} className="w-full" loading={loading}>
-                        Publish Test
-                      </Button>
                     </div>
                   </Card>
                 )}
@@ -654,12 +946,20 @@ const CreateTest = () => {
               Next <ChevronRight className="w-4 h-4" />
             </Button>
           ) : testKey ? (
-            <Button onClick={() => navigate('/admin/tests')}>
-              Go to Tests
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => navigate('/admin/tests')}>
+                Go to Tests
+              </Button>
+              <Button onClick={() => {
+                navigator.clipboard.writeText(testKey);
+                showToast('Test key copied!', 'success');
+              }}>
+                Copy Key
+              </Button>
+            </div>
           ) : (
             <Button onClick={handleSubmit} loading={loading}>
-              <Save className="w-4 h-4" /> Create Test
+              <Save className="w-4 h-4" /> Create Test & Generate Key
             </Button>
           )}
         </div>

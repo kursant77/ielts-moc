@@ -3,6 +3,9 @@ import { Admin } from '../models/Admin.js';
 import { Test } from '../models/Test.js';
 import { Attempt } from '../models/Attempt.js';
 import { TestKeyModel } from '../models/TestKey.js';
+import { Student } from '../models/Student.js';
+import { Result } from '../models/Result.js';
+import { testStorage } from '../utils/fileStorage.js';
 import { generateAccessToken, generateRefreshToken } from '../config/jwt.js';
 import logger from '../utils/logger.js';
 
@@ -123,14 +126,17 @@ export class OwnerService {
     const admins = db.admins;
     const tests = db.tests;
     const attempts = db.attempts;
-    const students = new Set(attempts.map(a => a.studentName));
+    
+    // Get ALL students from file-based storage (uploads/students/)
+    const allStudents = await Student.getAll();
 
     return {
       totalAdmins: admins.length,
       activeAdmins: admins.filter(a => a.isActive).length,
       totalTests: tests.length,
       activeTests: tests.filter(t => t.isActive).length,
-      totalStudents: students.size,
+      totalStudents: allStudents.length, // File-based storage count
+      totalUsers: allStudents.length, // Alias for totalStudents
       totalAttempts: attempts.length,
       completedAttempts: attempts.filter(a => a.isSubmitted).length
     };
@@ -191,6 +197,84 @@ export class OwnerService {
       isSubmitted: a.isSubmitted,
       duration: a.duration
     }));
+  }
+
+  // File-based storage methods - Owner sees ALL students
+  static async getAllUsers() {
+    // Get ALL students from uploads/students/
+    const students = await Student.getAll();
+    // Return full student information for Owner
+    return students.map(s => ({
+      id: s.id,
+      full_name: s.full_name || s.fullName || '',
+      username: s.username || s.login || '',
+      login: s.login || s.username || s.email || '',
+      email: s.email || '',
+      phone: s.phone || '',
+      birth_date: s.birth_date || '',
+      region: s.region || '',
+      gender: s.gender || '',
+      password_hash: s.password_hash || '***',
+      registered_at: s.registered_at || s.registration_date || s.createdAt || '',
+      last_login: s.last_login || s.lastLogin || null,
+      used_admin_key: s.used_admin_key || '',
+      test_status: s.test_status || 'not_taken',
+      test_score: s.test_score || '',
+      test_history: s.test_history || [],
+    }));
+  }
+
+  static async getUserById(userId) {
+    const student = await Student.findById(userId);
+    if (!student) {
+      throw new Error('User not found');
+    }
+    // Return full student information
+    return {
+      id: student.id,
+      full_name: student.full_name || student.fullName || '',
+      username: student.username || student.login || '',
+      login: student.login || student.username || student.email || '',
+      email: student.email || '',
+      phone: student.phone || '',
+      birth_date: student.birth_date || '',
+      region: student.region || '',
+      gender: student.gender || '',
+      password_hash: student.password_hash || '***',
+      registered_at: student.registered_at || student.registration_date || student.createdAt || '',
+      last_login: student.last_login || student.lastLogin || null,
+      used_admin_key: student.used_admin_key || '',
+      test_status: student.test_status || 'not_taken',
+      test_score: student.test_score || '',
+      test_history: student.test_history || [],
+    };
+  }
+
+  static async getAllResults() {
+    const results = await Result.getAll();
+    return results;
+  }
+
+  static async getUserResults(userId) {
+    const results = await Result.findByUser(userId);
+    return results;
+  }
+
+  static async updateUserStatus(userId, status) {
+    const student = await Student.findById(userId);
+    if (!student) {
+      throw new Error('User not found');
+    }
+    // Update test_status field
+    return await Student.updateTestStatus(userId, status);
+  }
+
+  static async resetUserPassword(userId, newPassword) {
+    const student = await Student.findById(userId);
+    if (!student) {
+      throw new Error('User not found');
+    }
+    return await Student.update(userId, { password: newPassword });
   }
 }
 

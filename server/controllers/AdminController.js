@@ -177,5 +177,36 @@ export class AdminController {
       res.status(500).json({ error: error.message });
     }
   }
+
+  // File-based storage endpoints - Admin sees ONLY their users
+  static async getMyUsers(req, res, next) {
+    try {
+      const users = await AdminService.getMyUsers(req.user.id);
+      res.json(users);
+    } catch (error) {
+      logger.error('Get my users error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async getMyResults(req, res, next) {
+    try {
+      const results = await AdminService.getMyResults(req.user.id);
+      res.json(results);
+    } catch (error) {
+      logger.error('Get my results error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async getMyTest(req, res, next) {
+    try {
+      const data = await AdminService.getMyTest(req.user.id, req.params.test_id);
+      res.json(data);
+    } catch (error) {
+      logger.error('Get my test error:', error);
+      res.status(404).json({ error: error.message });
+    }
+  }
 }
 

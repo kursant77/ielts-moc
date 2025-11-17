@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { studentApi } from '../../api/studentApi';
@@ -7,30 +7,64 @@ import Input from '../../components/Input';
 import Button from '../../components/Button';
 import Form from '../../components/Form';
 import { showToast } from '../../components/Toast';
-import { GraduationCap } from 'lucide-react';
+import { GraduationCap, Key } from 'lucide-react';
 
 const ExamAccess = () => {
+  const { user, login } = useAuth();
+  const navigate = useNavigate();
   const [testKey, setTestKey] = useState('');
   const [fullName, setFullName] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
-  const navigate = useNavigate();
+  const [profile, setProfile] = useState(null);
+
+  useEffect(() => {
+    // If user is logged in, load their profile
+    if (user && user.role === 'student') {
+      loadProfile();
+    }
+  }, [user]);
+
+  const loadProfile = async () => {
+    try {
+      const response = await studentApi.getProfile();
+      setProfile(response.data);
+      setFullName(response.data.full_name || user?.fullName || user?.name || '');
+    } catch (error) {
+      // If not logged in, that's okay
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!testKey.trim() || !fullName.trim()) {
+      showToast('Please enter test key and your name', 'error');
+      return;
+    }
+    
     setLoading(true);
 
     try {
-      const response = await studentApi.accessTest(testKey.toUpperCase().trim(), fullName);
-      login(
-        { ...response.data.attempt, role: 'student' },
-        response.data.accessToken,
-        response.data.refreshToken
+      // If user is logged in, pass their ID to update their file
+      const studentId = user?.id || null;
+      const response = await studentApi.accessTest(
+        testKey.toUpperCase().trim(), 
+        fullName,
+        studentId
       );
-      showToast('Access granted', 'success');
-      if (response.data.attempt) {
-        navigate('/student/dashboard');
+      
+      // Update auth if user is logged in
+      if (user && user.role === 'student') {
+        // Student already logged in, just navigate
+        showToast('Test key accepted! Redirecting to exam...', 'success');
+        navigate(`/exam/${testKey.toUpperCase().trim()}`);
       } else {
+        // New access, login with attempt token
+        login(
+          { ...response.data.attempt, role: 'student' },
+          response.data.accessToken,
+          response.data.refreshToken
+        );
+        showToast('Access granted', 'success');
         navigate(`/exam/${testKey.toUpperCase().trim()}`);
       }
     } catch (error) {
@@ -70,6 +104,8 @@ const ExamAccess = () => {
               onChange={(e) => setFullName(e.target.value)}
               placeholder="Enter your full name"
               required
+              disabled={!!profile} // Disable if profile loaded
+              helperText={profile ? 'Using your registered name' : ''}
             />
             <Button type="submit" className="w-full" disabled={loading} loading={loading}>
               Start Exam

@@ -53,7 +53,12 @@ export class AuthController {
           const isValid = await Student.verifyPassword(student, password);
           logger.info(`Student password valid: ${isValid}`);
           if (isValid) {
-            user = { id: student.id, email: student.email || student.login, fullName: student.fullName };
+            user = { 
+              id: student.id, 
+              email: student.email || student.login, 
+              fullName: student.full_name || student.fullName,
+              username: student.username || student.login
+            };
             role = 'student';
             await Student.updateLastLogin(student.id);
           }
@@ -90,17 +95,36 @@ export class AuthController {
 
   static async register(req, res, next) {
     try {
-      const { fullName, login, password } = req.body;
+      const { 
+        fullName, 
+        full_name, 
+        login, 
+        username, 
+        email, 
+        password, 
+        phone, 
+        birth_date,
+        birthDate,
+        region,
+        gender
+      } = req.body;
       
+      // Registration saves to uploads/students/ as JSON file
       const student = await Student.create({
-        email: login,
+        fullName: fullName || full_name,
+        email: email || login,
+        username: username || login || email,
+        login: login || username || email,
         password,
-        fullName
+        phone: phone || '',
+        birth_date: birth_date || birthDate || '',
+        region: region || '',
+        gender: gender || '',
       });
       
       const payload = {
         id: student.id,
-        email: student.email,
+        email: student.email || student.login,
         role: 'student'
       };
 
@@ -108,7 +132,8 @@ export class AuthController {
         user: {
           id: student.id,
           email: student.email,
-          fullName: student.fullName
+          username: student.username,
+          fullName: student.full_name || student.fullName
         },
         role: 'student',
         accessToken: generateAccessToken(payload),
